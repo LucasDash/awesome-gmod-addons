@@ -1,0 +1,11 @@
+{
+  "title": "Contact IK",
+  "type": "tool",
+  "tags": [
+    "fun",
+    "build"
+  ],
+  "ignore": [
+    "*.md",
+  ]
+}
