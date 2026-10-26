@@ -6,6 +6,7 @@ if SERVER then
     AddCSLuaFile("contact_ik/cl_body.lua")
     AddCSLuaFile("contact_ik/cl_legs.lua")
     AddCSLuaFile("contact_ik/cl_contacts.lua")
+    AddCSLuaFile("contact_ik/cl_carry.lua")
     AddCSLuaFile("contact_ik/cl_settings.lua")
 end
 ContactIK = ContactIK or {}
@@ -28,6 +29,7 @@ if CLIENT then
     load("contact_ik/cl_legs.lua")
     load("contact_ik/cl_leases.lua")
     load("contact_ik/cl_contacts.lua")
+    load("contact_ik/cl_carry.lua")
     load("contact_ik/cl_settings.lua")
 end
 hook.Run("ContactIKReady",ContactIK)

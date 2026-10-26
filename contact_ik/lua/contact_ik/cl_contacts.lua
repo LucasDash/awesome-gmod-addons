@@ -1,8 +1,11 @@
--- Automatic upper-body presentation. No input, forces, movement or AI setters.
+-- Upper-body presentation only; observes Use input, never consumes it.
 local K=ContactIK
 if K.StopPassive then K.StopPassive() end
 local enabled=CreateClientConVar("contact_ik_enabled","1",true,false,"Automatic environmental hand posing")
 local players=CreateClientConVar("contact_ik_players","1",true,false,"Pose compatible player world models")
+local requireUse=CreateClientConVar("contact_ik_require_use","1",true,false,"Hold Use (E by default) for player contact; NPCs remain automatic")
+local weapons=CreateClientConVar("contact_ik_weapons","1",true,false,"Allow the free hand with weapons while idle")
+local nativeCarry=CreateClientConVar("contact_ik_native_carry","1",true,false,"Follow objects held with native Use, without changing pickup physics")
 local npcs=CreateClientConVar("contact_ik_npcs","1",true,false,"Pose compatible native humanoid NPCs")
 local proximity=CreateClientConVar("contact_ik_distance","10",true,false,"Contact proximity in model-scaled Source units",2,24)
 local range=CreateClientConVar("contact_ik_range","900",true,false,"Maximum entity evaluation distance",128,2000)
@@ -30,29 +33,65 @@ local candidates={} local nextDiscovery,nextTick=0,0 local cursor=1
 K.PassiveReports=setmetatable({}, {__mode="k"})
 K.PassiveStats={entities=0,traces=0,updates=0}
 
-function K.PassiveEligibility(ent)
+function K.NativeCarriedEntity(ent)
+    if nativeCarry:GetBool() and ent:IsPlayer() and ent.GetNW2Entity then
+        local held=ent:GetNW2Entity("ContactIK.NativeCarry")
+        if IsValid(held) and not held:IsDormant() then return held end
+    end
+end
+function K.PassiveInputRequested(ent)
+    if not ent:IsPlayer() or not requireUse:GetBool() then return true end
+    if K.NativeCarriedEntity(ent) then return true end
+    local lease=K.PoseLeases and K.PoseLeases[ent]
+    -- Existing API-1 consumers explicitly opting into a free arm remain in
+    -- control of their pose; the default Use gate governs standalone players.
+    if lease and lease.owner and lease.passiveBlocked==false then return true end
+    if ent==LocalPlayer() then return ent:KeyDown(IN_USE) end
+    return ent:GetNW2Bool("ContactIK.UseHeld",false)
+end
+function K.PassiveEligibility(ent,fading)
     if not IsValid(ent) or ent:IsDormant() or ent:GetNoDraw() then return end
     local isPlayer=ent:IsPlayer()
     if isPlayer then
         if not players:GetBool() or not ent:Alive() or ent:InVehicle() then return end
+        if not fading and not K.PassiveInputRequested(ent) then return end
     elseif not npcs:GetBool() or not ent:IsNPC() or ent:IsScripted() or ent:Health()<=0 then return end
     -- Native NPC state is server-only. A server-owned presentation hint keeps
     -- client posing out of scripted sequences, combat and occupied weapon arms.
     if not isPlayer and ent:GetNW2Bool("ContactIK.NPCBlocked",true) then return end
     if ent.IsProne and ent:IsProne() then return end
+    local lease=K.PoseLeases and K.PoseLeases[ent]
+    if lease and lease.owner and lease.passiveBlocked then return end
     local rig=K.Describe(ent)
     if not rig.arms[1] and not rig.arms[2] then return end
     local allowed={rig.arms[1],rig.arms[2]}
     local weapon=ent.GetActiveWeapon and ent:GetActiveWeapon()
-    if IsValid(weapon) then
+    -- Native carrying holsters/hides the weapon. Visible weapons and explicit
+    -- pose owners keep the normal arbitration policy.
+    local carrying=K.NativeCarriedEntity(ent)
+    if IsValid(weapon) and not (carrying and weapon:GetNoDraw()) then
         local class=weapon:GetClass()
         if class~="weapon_functional_hands" and class~="weapon_fists" and class~="gmod_camera" then
             if class=="gmod_tool" or class=="weapon_physgun" or class=="weapon_physcannon" then allowed[2]=false
-            else return end -- combat/reload/aiming animation retains ownership
+            elseif weapons:GetBool() then
+                local hold=weapon.GetHoldType and weapon:GetHoldType() or ""
+                if hold=="duel" or hold=="melee2" then return end
+                allowed[2]=false
+            else return end
         end
+        if weapon.ContactIKArms==false then return end
+        if istable(weapon.ContactIKArms) then
+            for index=1,2 do allowed[index]=rig.arms[index] and weapon.ContactIKArms[index]==true end
+        end
+        allowed.preserveBody=not allowed[1] or not allowed[2]
     end
-    if isPlayer and (ent:KeyDown(IN_ATTACK) or ent:KeyDown(IN_ATTACK2)) and
-        (not IsValid(weapon) or weapon:GetClass()~="weapon_functional_hands") then return end
+    if isPlayer and (not IsValid(weapon) or weapon:GetClass()~="weapon_functional_hands") then
+        local busy=ent==LocalPlayer() and (ent:KeyDown(IN_ATTACK) or ent:KeyDown(IN_ATTACK2) or ent:KeyDown(IN_RELOAD))
+            or ent~=LocalPlayer() and ent:GetNW2Bool("ContactIK.PlayerBusy",false)
+        if busy or IsValid(weapon) and not (carrying and weapon:GetNoDraw()) and ((weapon.GetReloading and weapon:GetReloading()==true)
+            or (weapon.GetNextPrimaryFire and weapon:GetNextPrimaryFire()>CurTime()+.15)) then return end
+    end
+    if not allowed[1] and not allowed[2] then return end
     return allowed
 end
 local function trace(data,hull)
@@ -85,6 +124,78 @@ local function resolve(ent,c)
     end
     return c
 end
+local function retireCarry(ent,c)
+    if c.role=="carry" and c.entity~=NULL and K.NativeCarriedEntity(ent)~=c.entity then
+        -- Freeze the last visible point on release instead of chasing a thrown
+        -- or removed prop during the normal fade-out.
+        c.localPoint,c.localNormal,c.localTangent=nil,nil,nil
+        c.entity=NULL c.lostAt=c.lostAt or CurTime()
+    end
+end
+function K.FindNativeCarryContacts(ent,held,allowed,previous)
+    local contacts={} local scale=ent:GetModelScale() local ignored=filter(ent)
+    local center=held:WorldSpaceCenter() local radius=held:BoundingRadius()
+    for index=1,2 do
+        local a=allowed[index] and K.SensingArm(ent,index)
+        if a then
+            local prior=previous and previous[index]
+            if prior and prior.entity==held and prior.role=="carry" and prior.targetModel==held:GetModel()
+                and prior.targetScale==held:GetModelScale() then prior=resolve(ent,prior) else prior=nil end
+            local endpoints={}
+            if prior then endpoints[#endpoints+1]=prior.point-prior.normal*2*scale end
+            local nearest=held:NearestPoint(a.root)
+            endpoints[#endpoints+1]=nearest+(nearest-a.root):GetNormalized()*(radius*2+4*scale)
+            endpoints[#endpoints+1]=center
+            for attempt,endpoint in ipairs(endpoints) do
+                local ray=trace({start=a.root,endpos=endpoint,filter=ignored,mask=MASK_SOLID},false)
+                if ray.Hit and not ray.StartSolid and ray.Entity==held then
+                    -- The first ray validates an existing planted point. Hitting
+                    -- another facet of the SAME held prop does not move that
+                    -- point or rotate the wrist onto the new facet. Replan when
+                    -- the planted face turns behind the shoulder or is blocked.
+                    local planted=prior and attempt==1 and prior.normal:Dot((a.root-prior.point):GetNormalized())>-.15
+                    if planted then
+                        ray.HitPos,ray.HitNormal=prior.point,prior.normal
+                    end
+                    local tangent=planted and prior.tangent or K.SurfaceTangent(ray.HitNormal,ent:GetForward())
+                    local wrist=K.TargetWrist(ent,index,ray.HitPos,ray.HitNormal,tangent)
+                    local distance=a.root:Distance(wrist)
+                    -- Native carry distance is not authored arm length. Use a
+                    -- bounded best-reach pose rather than changing that distance
+                    -- or stretching a limb to manufacture exact contact.
+                    local align=K.CarryAlignmentAvailable and K.CarryAlignmentAvailable(held)
+                    if distance<=a.reach+((align or not allowed.preserveBody)and 32*scale or 0) and distance>=a.minimum then
+                        contacts[index]=anchor(ent,{arm=index,point=ray.HitPos,normal=ray.HitNormal,tangent=tangent,
+                            entity=held,role="carry",score=distance,weight=1,collision=true,passive=true,
+                            preserveBody=allowed.preserveBody,bodyReach=16,bodyLean=35,
+                            targetModel=held:GetModel(),targetScale=held:GetModelScale()})
+                        if planted then
+                            contacts[index].localPoint,contacts[index].localNormal,contacts[index].localTangent=
+                                prior.localPoint,prior.localNormal,prior.localTangent
+                        end
+                        break
+                    end
+                end
+            end
+        end
+    end
+    -- A can should not attract two overlapping palms. Retain the existing hand
+    -- when both can reach a small surface; broad props can accept both hands.
+    local priorHands=0
+    for _,c in pairs(previous or {})do
+        if c.entity==held and c.role=="carry" and K.PassiveContactWeight(c)>.15 then priorHands=priorHands+1 end
+    end
+    local separation=(priorHands==2 and 6 or 12)*scale
+    if contacts[1] and contacts[2] and contacts[1].point:Distance(contacts[2].point)<separation then
+        local keep=contacts[1].score<=contacts[2].score and 1 or 2
+        for index=1,2 do
+            local prior=previous and previous[index]
+            if prior and prior.entity==held and prior.role=="carry" and K.PassiveContactWeight(prior)>.15 then keep=index break end
+        end
+        contacts[3-keep]=nil
+    end
+    return contacts
+end
 -- Diagnostic entry also used by the normal controller; no synthetic contacts.
 function K.FindPassiveContacts(ent,allowed,previous)
     local scale=ent:GetModelScale() local mins,maxs=ent:GetCollisionBounds()
@@ -92,7 +203,7 @@ function K.FindPassiveContacts(ent,allowed,previous)
     local arms={} local low,high=pos.z+maxs.z,pos.z+mins.z
     for index=1,2 do
         if allowed[index] then
-            local a=K.Arm(ent,index) arms[index]=a
+            local a=K.SensingArm(ent,index) arms[index]=a
             if a then low=math.min(low,a.root.z-a.reach*.9) high=math.max(high,a.root.z+a.reach*.5) end
         end
     end
@@ -127,7 +238,7 @@ function K.FindPassiveContacts(ent,allowed,previous)
         if prior and prior.entity==ray.Entity and prior.role==role then score=score-5*scale end
         if not contacts[index] or score<contacts[index].score then
             contacts[index]=anchor(ent,{arm=index,point=ray.HitPos,normal=ray.HitNormal,tangent=tangent,
-                entity=ray.Entity,role=role,score=score,weight=1,collision=true,passive=true})
+                entity=ray.Entity,role=role,score=score,weight=1,collision=true,passive=true,preserveBody=allowed.preserveBody})
         end
     end
     for _,d in ipairs(dirs) do
@@ -186,12 +297,21 @@ local function reader(ent)
     local state=active[ent]
     if not state or not enabled:GetBool() or not IsValid(LocalPlayer()) or
         ent:GetPos():DistToSqr(LocalPlayer():GetPos())>math.Clamp(range:GetFloat(),128,2000)^2 then return end
-    local allowed=K.PassiveEligibility(ent) if not allowed then return end
+    local allowed=K.PassiveEligibility(ent,true) if not allowed then return end
+    local requested=K.PassiveInputRequested(ent)
     local result={}
     for index,c in pairs(state.contacts) do
         if allowed[index] then
+            retireCarry(ent,c)
             c=resolve(ent,c)
-            if c then c.weight=K.PassiveContactWeight(c) result[index]=c end
+            if c then
+                if c.role=="carry" and c.entity~=NULL and K.CarryAlignedPoint then c.point=K.CarryAlignedPoint(c.entity,c.point)end
+                if not requested then c.lostAt=c.lostAt or CurTime() end
+                c.weight=K.PassiveContactWeight(c)
+                c.preserveBody=allowed.preserveBody or c.role=="carry" and c.entity~=NULL
+                    and K.CarryAlignmentAvailable and K.CarryAlignmentAvailable(c.entity) or nil
+                result[index]=c
+            end
         end
     end
     return next(result) and result or nil
@@ -202,52 +322,85 @@ end
 function K.StopPassive()
     hook.Remove("Think","ContactIK.Passive")
     for ent in pairs(active) do release(ent) end
+    if K.StopCarryAlignment then K.StopCarryAlignment(true) end
     candidates={}
 end
 local function update(ent)
-    local allowed=K.PassiveEligibility(ent) local lp=LocalPlayer()
+    local allowed=K.PassiveEligibility(ent,true) local lp=LocalPlayer()
     if not allowed or not IsValid(lp) or ent:GetPos():DistToSqr(lp:GetPos())>math.Clamp(range:GetFloat(),128,2000)^2 then release(ent) return end
+    local requested=K.PassiveInputRequested(ent)
+    if not requested and not active[ent] then return end
     local state=active[ent] or {contacts={}}
-    local contacts=K.FindPassiveContacts(ent,allowed,state.contacts) local now=CurTime()
+    local held=K.NativeCarriedEntity(ent)
+    local contacts={} local now=CurTime()
+    if requested then
+        contacts=held and K.FindNativeCarryContacts(ent,held,allowed,state.contacts)
+            or K.FindPassiveContacts(ent,allowed,state.contacts)
+    end
     for index,old in pairs(state.contacts) do
+        retireCarry(ent,old)
         if not contacts[index] and allowed[index] and resolve(ent,old) then
             old.lostAt=old.lostAt or now old.weight=K.PassiveContactWeight(old,now)
             if now-old.lostAt<grace+math.Clamp(fade:GetFloat(),.15,1.5)+.2 then contacts[index]=old end
         end
     end
+    if held and K.UpdateCarryAlignment then K.PassiveStats.traces=K.PassiveStats.traces+K.UpdateCarryAlignment(ent,held,contacts)end
     if not next(contacts) then release(ent) return end
     state.contacts=contacts active[ent]=state
     K.AcquirePassive(ent,owner,reader)
+    -- Same-frame memoization is opt-in for this stable reader only.
+    local lease=K.PoseLeases[ent]
+    if lease and lease.passiveOwner==owner then lease.automaticOwner=owner end
     K.PassiveReports[ent]={contacts=contacts,presentationOnly=true}
 end
 hook.Add("Think","ContactIK.Passive",function()
     local now=CurTime()
-    if not enabled:GetBool() then for ent in pairs(active) do release(ent) end return end
+    if not enabled:GetBool() then
+        for ent in pairs(active) do release(ent) end
+        if K.StopCarryAlignment then K.StopCarryAlignment(true) end
+        return
+    end
     if now>=nextDiscovery then
         local nearby={} local distances={} local lp=LocalPlayer()
         local limit=math.Clamp(range:GetFloat(),128,2000)^2
-        local all=player.GetAll()
-        for _,ent in ipairs(ents.FindByClass("npc_*")) do all[#all+1]=ent end
+        local all=players:GetBool() and player.GetAll() or {}
+        if npcs:GetBool() then for _,ent in ipairs(ents.FindByClass("npc_*")) do all[#all+1]=ent end end
         if IsValid(lp) then
             for _,ent in ipairs(all) do
                 local distance=ent:GetPos():DistToSqr(lp:GetPos())
-                if distance<=limit and K.PassiveEligibility(ent) then nearby[#nearby+1]=ent distances[ent]=distance end
+                if ent~=lp and distance<=limit and K.PassiveEligibility(ent,true) then nearby[#nearby+1]=ent distances[ent]=distance end
             end
             table.sort(nearby,function(a,b)return distances[a]<distances[b]end)
         end
         candidates={} local selected={}
-        for i=1,math.min(#nearby,32) do candidates[i]=nearby[i] selected[nearby[i]]=true end
-        for ent in pairs(active) do if not selected[ent] then release(ent) end end
+        for i=1,math.min(#nearby,31) do candidates[i]=nearby[i] selected[nearby[i]]=true end
+        for ent in pairs(active) do if ent~=lp and not selected[ent] then release(ent) end end
         nextDiscovery=now+1 cursor=1
     end
     if now<nextTick then return end nextTick=now+.1
     K.PassiveStats.traces=0 K.PassiveStats.updates=0
-    -- At most four subjects per poll, at most 30 discovery traces each.
-    for _=1,math.min(#candidates,4) do
+    -- Local input gets a 0.1-second response without raising the four-subject budget.
+    local lp=LocalPlayer() local budget=4
+    if IsValid(lp) and (active[lp] or K.PassiveInputRequested(lp)) then
+        update(lp) budget=budget-1 K.PassiveStats.updates=1
+    end
+    for _=1,math.min(#candidates,budget) do
         if cursor>#candidates then cursor=1 end
         local ent=candidates[cursor] cursor=cursor+1 update(ent)
         K.PassiveStats.updates=K.PassiveStats.updates+1
     end
     K.PassiveStats.entities=table.Count(active)
-    for ent in pairs(active) do if not IsValid(ent) or ent:IsDormant() then release(ent) end end
+    for ent,state in pairs(active) do
+        if not IsValid(ent) or ent:IsDormant() then release(ent)
+        elseif not K.PassiveInputRequested(ent) then
+            local alive=false
+            for _,c in pairs(state.contacts) do
+                c.lostAt=c.lostAt or now
+                -- Keep zero-weight targets briefly so the compositor can
+                -- finish easing, just as it does after losing a surface.
+                if now-c.lostAt<grace+math.Clamp(fade:GetFloat(),.15,1.5)+.2 then alive=true end
+            end
+            if not alive then release(ent) end
+        end
+    end
 end)

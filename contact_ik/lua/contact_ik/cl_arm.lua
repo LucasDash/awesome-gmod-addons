@@ -30,22 +30,19 @@ local function around(pivot, rot)
     b:SetTranslation(-pivot)
     return a * rot * b
 end
-local function descendant(ply, bone, ancestor)
-    for _ = 1, 128 do
-        if bone == ancestor then return true end
-        bone = ply:GetBoneParent(bone)
-        if not bone or bone < 0 then return false end
-    end
-    return false
+local function descendant(ply, bone, ancestor,rig)
+    return F.CachedBoneDescendant(ply,bone,ancestor,rig)
 end
 F.BoneRotation, F.BoneAround, F.BoneDescendant = rotation, around, descendant
 
-local function fingerPose(ply, spec, matrices, normal, amount, passive)
+local function fingerPose(ply, spec, matrices, normal, amount, passive,state)
     local limited = 0
+    local hierarchy=F.BoneHierarchy(ply)
+    state.fingerClearance=state.fingerClearance or {}
     for finger = 0, 4 do
         for joint = 0, 2 do
             local suffix = "Finger" .. finger .. (joint == 0 and "" or tostring(joint))
-            local bone = ply:LookupBone(spec.prefix .. suffix)
+            local bone = F.RigBone(ply,spec.prefix .. suffix,hierarchy)
             if bone and matrices[bone] then
                 local current = matrices[bone]
                 local pivot = current:GetTranslation()
@@ -53,7 +50,7 @@ local function fingerPose(ply, spec, matrices, normal, amount, passive)
                 local flat = passive and original or original - normal * original:Dot(normal)
                 if flat:LengthSqr() > 0.001 then
                     flat:Normalize()
-                    local child = joint < 2 and ply:LookupBone(spec.prefix .. "Finger" .. finger .. (joint + 1))
+                    local child = joint < 2 and F.RigBone(ply,spec.prefix .. "Finger" .. finger .. (joint + 1),hierarchy)
                     local scale = ply:GetModelScale()
                     local length = child and matrices[child] and pivot:Distance(matrices[child]:GetTranslation()) or 1.1 * scale
                     local angle = math.rad((finger == 0 and 20 or (joint == 1 and 55 or 35)) * amount)
@@ -63,24 +60,33 @@ local function fingerPose(ply, spec, matrices, normal, amount, passive)
                     end
                     local fraction = 1
                     if amount > 0.001 then
-                        local pad = Vector(0.18, 0.18, 0.18) * scale
-                        local function clear(value)
-                            local tr = util.TraceHull({start = pivot, endpos = pivot + direction(value) * length,
-                                mins = -pad, maxs = pad, mask = MASK_SOLID, filter = ply})
-                            return not tr.Hit and not tr.StartSolid
-                        end
-                        if not clear(1) then
-                            local lo, hi = 0, 1
-                            for _ = 1, 5 do
-                                local mid = (lo + hi) * 0.5
-                                if clear(mid) then lo = mid else hi = mid end
+                        local endpoint=pivot+direction(1)*length
+                        local cached=state.fingerClearance[bone]
+                        if cached and cached.frame==FrameNumber() and cached.pivot==pivot and cached.endpoint==endpoint and cached.scale==scale
+                            and cached.flat==flat and cached.normal==normal and cached.angle==angle and cached.length==length then
+                            fraction=cached.fraction limited=limited+cached.limited
+                        else
+                            local pad = Vector(0.18, 0.18, 0.18) * scale
+                            local function clear(value)
+                                local tr = util.TraceHull({start = pivot, endpos = pivot + direction(value) * length,
+                                    mins = -pad, maxs = pad, mask = MASK_SOLID, filter = ply})
+                                return not tr.Hit and not tr.StartSolid
                             end
-                            fraction, limited = lo, limited + 1
+                            if not clear(1) then
+                                local lo, hi = 0, 1
+                                for _ = 1, 5 do
+                                    local mid = (lo + hi) * 0.5
+                                    if clear(mid) then lo = mid else hi = mid end
+                                end
+                                fraction, limited = lo, limited + 1
+                            end
+                            state.fingerClearance[bone]={frame=FrameNumber(),pivot=pivot,endpoint=endpoint,scale=scale,flat=flat,normal=normal,angle=angle,length=length,
+                                fraction=fraction,limited=fraction<1 and 1 or 0}
                         end
                     end
                     local transform = around(pivot, rotation(original, direction(fraction)))
                     for id, matrix in pairs(matrices) do
-                        if descendant(ply, id, bone) then matrices[id] = transform * matrix end
+                        if descendant(ply, id, bone,hierarchy) then matrices[id] = transform * matrix end
                     end
                 end
             end
@@ -136,6 +142,7 @@ local function freeHandPose(ply,contact,matrices,state)
         upperLength=root:Distance(matrices[fore]:GetTranslation()),foreLength=matrices[fore]:GetTranslation():Distance(matrices[hand]:GetTranslation())}
 end
 function F.BuildArmPose(ply, contact, state)
+    if F.RefreshHierarchy then F.RefreshHierarchy(ply)end
     local spec = F.Arms[contact.arm]
     if not spec then return end
     local upper = ply:LookupBone(spec.prefix .. "UpperArm")
@@ -143,12 +150,12 @@ function F.BuildArmPose(ply, contact, state)
     local hand = ply:LookupBone(spec.prefix .. "Hand")
     if not upper or not fore or not hand then return end
     local matrices = {}
+    local hierarchy=F.BoneHierarchy(ply)
+    local other=contact.freeHand and ply:LookupBone(F.Arms[contact.arm==1 and 2 or 1].prefix.."UpperArm")
+    local spine=(contact.bodyReach or 0)>0 and ply:LookupBone(contact.bodyPivot=="hips" and "ValveBiped.Bip01_Spine" or "ValveBiped.Bip01_Spine1")
     -- Snapshot the subtree before writing: engine propagation is not assumed.
     for bone = 0, ply:GetBoneCount() - 1 do
-        local spineName=contact.bodyPivot=="hips" and "ValveBiped.Bip01_Spine" or "ValveBiped.Bip01_Spine1"
-        local other=contact.freeHand and ply:LookupBone(F.Arms[contact.arm==1 and 2 or 1].prefix.."UpperArm")
-        if descendant(ply, bone, upper) or (other and descendant(ply,bone,other)) or ((contact.bodyReach or 0)>0 and ply:LookupBone(spineName) and
-            descendant(ply,bone,ply:LookupBone(spineName))) then
+        if descendant(ply, bone, upper,hierarchy) or (other and descendant(ply,bone,other,hierarchy)) or (spine and descendant(ply,bone,spine,hierarchy)) then
             local m = contact.baseMatrices and contact.baseMatrices[bone] or ply:GetBoneMatrix(bone)
             if m then matrices[bone] = Matrix(m) end
         end
@@ -165,8 +172,27 @@ function F.BuildArmPose(ply, contact, state)
         state.bodyAngle,state.bodyFrame=0,nil
         state.normal,state.tangent,state.pole=nil,nil,nil
         state.orientationFrame,state.poleFrame=nil,nil
+        state.fingerClearance=nil
+        state.carryEntity,state.carryFrame=nil,nil
         state.profile = F.HandProfile(ply, contact.arm, matrices)
     end
+    -- Carry smoothing belongs to the moving prop's frame. Transport its old
+    -- target/orientation first, then ease only changes to the local contact.
+    -- Otherwise ordinary walking/turning is filtered as if the prop stood still.
+    if contact.role=="carry" and IsValid(contact.entity) and not contact.lostAt then
+        local frame=Matrix()frame:SetAngles(contact.entity:GetAngles())
+        local origin=contact.entity:GetPos()
+        frame:SetTranslation(F.CarryAlignedPoint and F.CarryAlignedPoint(contact.entity,origin) or origin)
+        if state.carryEntity==contact.entity and state.carryFrame then
+            local motion=frame*state.carryFrame:GetInverse()local shift=motion:GetTranslation()
+            if state.target then state.target=motion*state.target end
+            if state.normal then state.normal=(motion*state.normal-shift):GetNormalized()end
+            if state.tangent then state.tangent=(motion*state.tangent-shift):GetNormalized()end
+            local body=contact.bodyState
+            if body and body.bodyTarget then body.bodyTarget=motion*body.bodyTarget end
+        end
+        state.carryEntity,state.carryFrame=contact.entity,frame
+    else state.carryEntity,state.carryFrame=nil,nil end
     local tangent = contact.tangent or F.SurfaceTangent(contact.normal, ply:GetForward())
     local target = contact.wristTarget or F.TargetWrist(ply, contact.arm, contact.point, contact.normal, tangent, state.profile)
     -- Passive frame changes ease along with the wrist, including corner switches.
@@ -177,7 +203,8 @@ function F.BuildArmPose(ply, contact, state)
             state.normal=LerpVector(alpha,state.normal or contact.normal,contact.normal):GetNormalized()
             state.tangent=LerpVector(alpha,state.tangent or tangent,tangent):GetNormalized()
         end
-        contact=table.Copy(contact) contact.normal=state.normal tangent=state.tangent
+        local bodyState=contact.bodyState
+        contact=table.Copy(contact) contact.bodyState=bodyState contact.normal=state.normal tangent=state.tangent
     end
     local bodyTransform,bodyAngle
     if (contact.bodyReach or 0)>0 and F.BodyReachTransform then
@@ -249,12 +276,12 @@ function F.BuildArmPose(ply, contact, state)
         end
     end
     local upperTransform = around(root, rotation(elbow - root, solved - root))
-    for bone,matrix in pairs(matrices) do if descendant(ply,bone,upper) then matrices[bone]=upperTransform*matrix end end
+    for bone,matrix in pairs(matrices) do if descendant(ply,bone,upper,hierarchy) then matrices[bone]=upperTransform*matrix end end
     local newElbow = matrices[fore]:GetTranslation()
     local newWrist = matrices[hand]:GetTranslation()
     local lowerTransform = around(newElbow, rotation(newWrist - newElbow, wanted - newElbow))
     for bone, matrix in pairs(matrices) do
-        if descendant(ply, bone, fore) then matrices[bone] = lowerTransform * matrix end
+        if descendant(ply, bone, fore,hierarchy) then matrices[bone] = lowerTransform * matrix end
     end
     local handMatrix = matrices[hand]
     local desired = F.HandFrame(contact.normal, tangent)
@@ -263,13 +290,16 @@ function F.BuildArmPose(ply, contact, state)
     desired:SetTranslation(handMatrix:GetTranslation())
     local handTransform = desired * handMatrix:GetInverse()
     for bone, matrix in pairs(matrices) do
-        if descendant(ply, bone, hand) then matrices[bone] = handTransform * matrix end
+        if descendant(ply, bone, hand,hierarchy) then matrices[bone] = handTransform * matrix end
     end
-    local fingerLimit = (not contact.passive or state.curl>.001) and fingerPose(ply, spec, matrices, contact.normal, state.curl,contact.passive) or 0
+    local fingerLimit = (not contact.passive or state.curl>.001) and fingerPose(ply, spec, matrices, contact.normal, state.curl,contact.passive,state) or 0
     local free=contact.freeHand and freeHandPose(ply,contact,matrices,state) or nil
     local finalHand = matrices[hand]
     local actualPalm = finalHand:GetTranslation() + finalHand:GetForward():GetNormalized() * state.profile.length
         + finalHand:GetRight():GetNormalized() * state.profile.depth
+    if contact.role=="carry" and F.RecordCarryPalm then
+        F.RecordCarryPalm(ply,contact.entity,contact.arm,actualPalm,contact.point+contact.normal*state.profile.clearance,state.weight)
+    end
     return matrices, {status = "posed", arm = state.arm,
         wristError = matrices[hand]:GetTranslation():Distance(target),
         solvedError = matrices[hand]:GetTranslation():Distance(wanted),
@@ -292,14 +322,19 @@ function F.BuildContactsPose(ent,contacts,state,baseMatrices)
     if contacts[1] and contacts[2] then
         local excess={}
         for index=1,2 do
-            local a=F.Arm(ent,index)
+            local a=F.SensingArm and F.SensingArm(ent,index)or F.Arm(ent,index)
             excess[index]=a and a.root:Distance(F.TargetWrist(ent,index,contacts[index].point,contacts[index].normal,contacts[index].tangent))-a.reach or 0
         end
         primary=state.bodyArm or (excess[2]>excess[1] and 2 or 1)
         local other=primary==1 and 2 or 1
-        if excess[other]>excess[primary]+ent:GetModelScale() then primary=other end
+        local carry=contacts[1].role=="carry" and contacts[2].role=="carry" and contacts[1].entity==contacts[2].entity
+        if not carry and excess[other]>excess[primary]+ent:GetModelScale() then primary=other end
     end
     state.bodyArm=primary
+    local suppressed=baseMatrices~=nil or contacts[primary] and contacts[primary].preserveBody==true or false
+    if state.bodySuppressed~=suppressed then
+        state.body={} state.bodySuppressed=suppressed
+    end
     local order={primary,primary==1 and 2 or 1}
     local common=baseMatrices
     for _,index in ipairs(order) do
@@ -310,9 +345,9 @@ function F.BuildContactsPose(ent,contacts,state,baseMatrices)
             spec.response=response
             spec.arm=index spec.passive=true spec.gripping=false spec.freeHand=false
             spec.bodyReach=0 spec.baseMatrices=common
-            if index==primary and not baseMatrices then
-                spec.bodyPivot="hips" spec.bodyLean=12 spec.bodyState=state.body
-                spec.bodyReach=5*ent:GetModelScale()*(state.arms[index].weight or 0)
+            if index==primary and not baseMatrices and not c.preserveBody then
+                spec.bodyPivot="hips" spec.bodyLean=math.Clamp(c.bodyLean or 12,0,35) spec.bodyState=state.body
+                spec.bodyReach=math.Clamp(c.bodyReach or 5,0,16)*ent:GetModelScale()*(state.arms[index].weight or 0)
             end
             local pose,r=F.BuildArmPose(ent,spec,state.arms[index])
             if pose then for id,m in pairs(pose) do matrices[id]=m end end

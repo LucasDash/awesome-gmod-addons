@@ -1,20 +1,85 @@
 local F = ContactIK
 F.API = 1
-F.Revision = "contact-ik-release1-20261012"
+F.Revision = "contact-ik-carry-stability-20261026"
+-- Player GetAngles can include aim pitch outside drawing while the rendered
+-- skeleton remains upright. Use the same explicit body frame in both contexts.
+function F.SubjectAngles(ent)
+    return ent.GetRenderAngles and ent:GetRenderAngles() or ent.GetAngles and ent:GetAngles() or ent:GetForward():Angle()
+end
+function F.SubjectToLocal(ent,point)
+    local result=WorldToLocal(point,angle_zero,ent:GetPos(),F.SubjectAngles(ent))return result
+end
+function F.SubjectToWorld(ent,point)
+    local result=LocalToWorld(point,angle_zero,ent:GetPos(),F.SubjectAngles(ent))return result
+end
+-- Cache topology, never animated matrices. A model/count change retires it.
+local rigs=setmetatable({}, {__mode="k"})
+function F.BoneHierarchy(ent)
+    local model,count=ent:GetModel(),ent:GetBoneCount() or 0
+    local rig=rigs[ent]
+    if not rig or rig.model~=model or rig.count~=count then
+        rig={model=model,count=count,names={},descendants={}} rigs[ent]=rig
+    end
+    return rig
+end
+function F.RigBone(ent,name,rig)
+    rig=rig or F.BoneHierarchy(ent)
+    local bone=rig.names[name]
+    if bone==nil then bone=ent:LookupBone(name) rig.names[name]=bone or false end
+    return bone or nil
+end
+function F.CachedBoneDescendant(ent,bone,ancestor,rig)
+    if ancestor==nil then return false end
+    rig=rig or F.BoneHierarchy(ent)
+    if not rig.parents then
+        rig.parents={}rig.pendingParents={}
+        for id=0,rig.count-1 do
+            local parent=ent:GetBoneParent(id)rig.parents[id]=parent
+            -- Newly replicated NPCs can report -1 for fingers until their
+            -- first bone setup, despite an already stable model/bone count.
+            if id~=0 and (not parent or parent<0)then rig.pendingParents[id]=true end
+        end
+    end
+    local members=rig.descendants[ancestor]
+    if not members then
+        members={} rig.descendants[ancestor]=members
+        for id=0,rig.count-1 do
+            local current=id
+            for _=1,128 do
+                if current==ancestor then members[id]=true break end
+                current=rig.parents[current]
+                if not current or current<0 then break end
+            end
+        end
+    end
+    return members[bone] or false
+end
+function F.RefreshHierarchy(ent)
+    local rig=F.BoneHierarchy(ent)
+    if not rig.parents or not next(rig.pendingParents or {})or rig.parentRefreshFrame==FrameNumber()then return false end
+    rig.parentRefreshFrame=FrameNumber()local changed=false
+    for id in pairs(rig.pendingParents)do
+        local parent=ent:GetBoneParent(id)
+        if parent and parent>=0 then rig.parents[id]=parent rig.pendingParents[id]=nil changed=true end
+    end
+    if changed then rig.descendants={}end
+    return changed
+end
 function F.Describe(ent)
+    local rig=IsValid(ent) and F.BoneHierarchy(ent)
     local sides={}
     for i,spec in ipairs(F.Arms) do
-        sides[i]=IsValid(ent) and ent:LookupBone(spec.prefix.."UpperArm")~=nil and
-            ent:LookupBone(spec.prefix.."Forearm")~=nil and ent:LookupBone(spec.prefix.."Hand")~=nil or false
+        sides[i]=rig and F.RigBone(ent,spec.prefix.."UpperArm",rig)~=nil and
+            F.RigBone(ent,spec.prefix.."Forearm",rig)~=nil and F.RigBone(ent,spec.prefix.."Hand",rig)~=nil or false
     end
     local legs={}
     for i,side in ipairs({"L","R"}) do
         local prefix="ValveBiped.Bip01_"..side.."_"
-        legs[i]=IsValid(ent) and ent:LookupBone(prefix.."Thigh")~=nil and
-            ent:LookupBone(prefix.."Calf")~=nil and ent:LookupBone(prefix.."Foot")~=nil or false
+        legs[i]=rig and F.RigBone(ent,prefix.."Thigh",rig)~=nil and
+            F.RigBone(ent,prefix.."Calf",rig)~=nil and F.RigBone(ent,prefix.."Foot",rig)~=nil or false
     end
     return {api=F.API,rig="ValveBiped",arms=sides,legs=legs,
-        upperBody=IsValid(ent) and ent:LookupBone("ValveBiped.Bip01_Spine")~=nil or false,presentationOnly=true}
+        upperBody=rig and F.RigBone(ent,"ValveBiped.Bip01_Spine",rig)~=nil or false,presentationOnly=true}
 end
 F.Arms = {
     {side="left", prefix="ValveBiped.Bip01_L_"},
