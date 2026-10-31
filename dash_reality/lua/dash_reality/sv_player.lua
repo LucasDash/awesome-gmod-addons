@@ -25,15 +25,15 @@ local function isGhost(ply)
     return ply:GetNW2Bool("NoclipGhost", false)
 end
 
-local function canDrop(ply, wep, forced)
+local function canDrop(ply, wep)
     if not IsValid(ply) or not IsValid(wep) or wep:GetOwner() ~= ply then return false end
-    if isGhost(ply) and not forced then return false end
+    if isGhost(ply) then return false end
     if cvTools and not cvTools:GetBool() and utilityWeapons[wep:GetClass()] then return false end
     return hook.Run("DashReality.CanDropWeapon", ply, wep) ~= false
 end
 
-function RT.DropWeapon(ply, wep, forced)
-    if not canDrop(ply, wep, forced) then return false end
+function RT.DropWeapon(ply, wep)
+    if not canDrop(ply, wep) then return false end
     ply:DropWeapon(wep)
     return true
 end
@@ -60,10 +60,10 @@ end
 hook.Add("DoPlayerDeath", "DashReality.DropOnDeath", function(ply)
     if not cvEnabled:GetBool() or not cvOnDeath:GetBool() then return end
     if cvActiveOnly:GetBool() then
-        RT.DropWeapon(ply, ply:GetActiveWeapon(), true)
+        RT.DropWeapon(ply, ply:GetActiveWeapon())
         return
     end
-    for _, wep in ipairs(ply:GetWeapons()) do RT.DropWeapon(ply, wep, true) end
+    for _, wep in ipairs(ply:GetWeapons()) do RT.DropWeapon(ply, wep) end
 end)
 
 -- Death Perception: a dying player hears silence, not blast tinnitus.

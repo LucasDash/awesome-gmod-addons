@@ -2,6 +2,7 @@
 -- Reimplements the standalone addon's behaviour on one fraction value instead of a state machine.
 
 local RT = DashReality
+if RT.DeathPerception and RT.DeathPerception.Shutdown then RT.DeathPerception.Shutdown() end
 
 local cvEnable = CreateClientConVar("rt_dp_enable", "1", true, false, "Enable the death perception effect.", 0, 1)
 local cvDelay = CreateClientConVar("rt_dp_delay", "0.25", true, false, "Seconds from death until the senses are fully cut off.", 0, 3)
@@ -16,26 +17,52 @@ local deathStart
 local fraction = 0
 local hearingCut = false
 local lastAlive = Angle()
-local headHidden = {}
+local headHidden = setmetatable({}, {__mode = "k"})
+local hiddenScale = Vector(0.01, 0.01, 0.01)
 
-local function restoreSenses()
-    deathStart, fraction = nil, 0
+local function restoreHearing()
     if hearingCut then
         hearingCut = false
         RunConsoleCommand("soundfade", "0", "1")
     end
 end
 
+local function restoreHeads()
+    for rag, state in pairs(headHidden) do
+        if IsValid(rag) then
+            local current = rag:GetManipulateBoneScale(state.bone)
+            if current and current.x == hiddenScale.x and current.y == hiddenScale.y and current.z == hiddenScale.z then
+                rag:ManipulateBoneScale(state.bone, state.scale)
+            end
+        end
+        headHidden[rag] = nil
+    end
+end
+
+local function restoreSenses()
+    deathStart, fraction = nil, 0
+    restoreHearing()
+    restoreHeads()
+end
+
 hook.Add("Think", "DashReality.DeathPerception", function()
     local ply = LocalPlayer()
-    if not IsValid(ply) then return end
+    if not IsValid(ply) then
+        if deathStart or hearingCut or next(headHidden) then restoreSenses() end
+        return
+    end
 
     if ply:Alive() then
         lastAlive = ply:EyeAngles()
-        if deathStart or hearingCut then restoreSenses() end
+        if deathStart or hearingCut or next(headHidden) then restoreSenses() end
         return
     end
-    if not cvEnable:GetBool() then return end
+    if not cvEnable:GetBool() then
+        if deathStart or hearingCut or next(headHidden) then restoreSenses() end
+        return
+    end
+    if not cvPov:GetBool() and next(headHidden) then restoreHeads() end
+    if not cvHearing:GetBool() then restoreHearing() end
 
     deathStart = deathStart or CurTime()
     fraction = math.Clamp((CurTime() - deathStart) / math.max(cvDelay:GetFloat(), 0.01), 0, 1)
@@ -74,9 +101,9 @@ hook.Add("DrawOverlay", "DashReality.DeathPerception", function()
     if cvBlur:GetBool() then
         surface.SetDrawColor(255, 255, 255, 255)
         surface.SetMaterial(blurMat)
+        blurMat:SetFloat("$blur", 5 * fraction)
+        blurMat:Recompute()
         for _ = 1, math.ceil(5 * fraction) do
-            blurMat:SetFloat("$blur", 5 * fraction)
-            blurMat:Recompute()
             render.UpdateScreenEffectTexture()
             surface.DrawTexturedRect(-1, -1, w + 2, h + 2)
         end
@@ -104,8 +131,10 @@ RT.AddViewModifier("death_perception", 100, function(ply, view)
     -- The head would fill the camera, so shrink it once per ragdoll.
     if not headHidden[rag] then
         local head = rag:LookupBone("ValveBiped.Bip01_Head1")
-        if head then rag:ManipulateBoneScale(head, Vector(0.01, 0.01, 0.01)) end
-        headHidden[rag] = true
+        if head then
+            headHidden[rag] = {bone = head, scale = rag:GetManipulateBoneScale(head)}
+            rag:ManipulateBoneScale(head, hiddenScale)
+        end
     end
 
     -- Blend from where the player was looking to where the ragdoll's head points.
@@ -116,8 +145,6 @@ RT.AddViewModifier("death_perception", 100, function(ply, view)
     return true
 end)
 
-timer.Create("DashReality.DeathPerception.Prune", 30, 0, function()
-    for rag in pairs(headHidden) do
-        if not IsValid(rag) then headHidden[rag] = nil end
-    end
-end)
+-- Head state uses weak keys, so removed ragdolls need no periodic prune scan.
+RT.DeathPerception = {Shutdown = restoreSenses}
+hook.Add("ShutDown", "DashReality.DeathPerception", restoreSenses)

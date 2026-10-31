@@ -1,8 +1,5 @@
 local RT = DashReality
 
-timer.Remove("RealityTools.FrozenScan")
-hook.Remove("PreDrawHalos", "RealityTools.FrozenHalo")
-
 local cvHalo = CreateClientConVar("rt_freeze_halo", "1", true, false, "Outline time-frozen NPCs.")
 local HALO_COLOR = Color(90, 200, 255)
 local frozenList = {}
@@ -116,7 +113,7 @@ local function settingGroup(panel, ghost)
     panel:ControlHelp("Server settings: host or superadmin.")
     for _, item in ipairs(RT.SettingList) do
         local isGhost = string.StartWith(item.name, "noclip_ghost_")
-        if isGhost == ghost and item.group ~= "Physics" and item.group ~= "Player" then
+        if isGhost == ghost and item.group ~= "Physics" and item.group ~= "Player" and item.group ~= "Environment" then
             local def = item
             if def.type == "bool" then
                 serverCheckbox(panel, def)
@@ -150,6 +147,13 @@ function RT.BuildGhostSettings(panel)
     panel:Help("Toggle your own player independently of the server settings above.")
 end
 
+-- GMod blocks Lua from writing these engine commands. Binding a DNumSlider
+-- writes them even while synchronizing, so only show manual instructions.
+local manualClientControls = {
+    fov_desired = "Field of view: adjust it in GMod Options, or enter fov_desired <value> in the developer console.",
+    net_graph = "Network graph: enter net_graph <0-3> in the developer console (0 turns it off).",
+}
+
 local function generalControl(panel, def)
         if def.realm == "server" and def.type == "bool" then
             local box = panel:CheckBox(def.label)
@@ -176,14 +180,26 @@ local function generalControl(panel, def)
             end
         elseif def.realm == "server" then
             serverSlider(panel, def.label, def.convar, def.min, def.max, def.decimals, "rt_environment", def.id)
+        elseif manualClientControls[def.convar] then
+            panel:ControlHelp(manualClientControls[def.convar])
         else
             panel:NumSlider(def.label, def.convar, def.min, def.max, def.decimals)
         end
-        if def.help then panel:ControlHelp(def.help) end
+        if def.help and not (def.realm == "client" and manualClientControls[def.convar]) then panel:ControlHelp(def.help) end
 end
 
 function RT.BuildGeneralSettings(panel)
     heading(panel, "Environment", "World settings apply to the whole session and require the host or a superadmin.")
+    local wash = RT.Settings.rt_water_decal_wash
+    if wash then
+        serverCheckbox(panel, wash)
+        if wash.help then panel:ControlHelp(wash.help) end
+    end
+    local fluid = RT.Settings.rt_gwater_vfire_contact
+    if fluid then
+        serverCheckbox(panel, fluid)
+        if fluid.help then panel:ControlHelp(fluid.help) end
+    end
     for _, def in ipairs(RT.GeneralSettings or {}) do
         if def.realm == "server" and def.id ~= "ai_disabled" and def.id ~= "ai_ignoreplayers" then
             generalControl(panel, def)
@@ -199,6 +215,7 @@ end
 -- Retain the prior public builder API while placing sections in a tool-menu
 -- tab alongside Tools and Utilities. The native stool supplies Freeze NPCs.
 function RT.BuildToolgunSettings(panel)
+    if RT.ToolShortcuts then RT.ToolShortcuts.BuildPanel(panel) end
     heading(panel, "Universal Tool Gun", "Server settings require the host or a superadmin.")
     for _, item in ipairs(RT.ToolgunSettings or {}) do
         local def = item
@@ -247,6 +264,9 @@ function RT.BuildPlayerSettings(panel)
     panel:ControlHelp("Optional legs only; first-person weapon hands remain under the weapon's control.")
 
     heading(panel, "View and HUD")
+    panel:CheckBox("Show movement speed (UPS)", "rt_ups_enabled")
+    panel:CheckBox("Measure horizontal speed only", "rt_ups_horizontal")
+    panel:ControlHelp("Speed is shown in Source units per second. Disable other speed meters to avoid overlapping displays.")
     for _, def in ipairs(RT.GeneralSettings or {}) do
         if def.realm == "client" then generalControl(panel, def) end
     end
@@ -361,7 +381,6 @@ RT.RegisterDashboardSection("development", "Development Settings", RT.BuildDevel
 
 -- Remove the old left-side creation-tab registration from prior live builds.
 if spawnmenu.GetCreationTabs then spawnmenu.GetCreationTabs()["Dash Reality"] = nil end
-hook.Remove("PopulateToolMenu", "RealityTools.SettingsPage")
 hook.Add("AddToolMenuTabs", "DashReality.Tab", function()
     spawnmenu.AddToolTab("DashReality", "Dash Reality", "icon16/world.png")
 end)

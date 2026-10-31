@@ -1,4 +1,4 @@
--- Noclip Ghost (optional Reality Tools feature): while noclipping, the player becomes an imperceptible observer.
+-- Noclip Ghost: while noclipping, the player becomes an imperceptible observer.
 -- Convars noclip_ghost_* are declared in RT.SettingList (autorun) so they appear in the settings panel.
 
 local GHOST_NW = "NoclipGhost"
@@ -11,14 +11,6 @@ if SERVER then
     local cvSilent = GetConVar("noclip_ghost_silent")
     local cvDamage = GetConVar("noclip_ghost_block_damage")
 
-    -- Older versions kept restoration state only in private closures. Release
-    -- that owned state once before replacing those callbacks; the reevaluation
-    -- below immediately reapplies eligible ghosts from their true baseline.
-    if not D.GhostStates then
-        local shutdown = hook.GetTable().ShutDown
-        local release = shutdown and shutdown["NoclipGhost.Shutdown"]
-        if release then release() end
-    end
     local ghosts = D.GhostStates or {}
     D.GhostStates = ghosts
     local SWEEP_TIMER = "NoclipGhost.Sweep"

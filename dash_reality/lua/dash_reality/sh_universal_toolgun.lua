@@ -75,7 +75,6 @@ end
 
 local VANISH_REMOVE_DELAY = 0.1
 local CORPSE_WINDOW = 1
-local CORPSE_RADIUS_SQR = 150 * 150
 local KILL_DAMAGE_TYPE = bit.bor(DMG_REMOVENORAGDOLL, DMG_ENERGYBEAM)
 
 local function isLivingTarget(ent)
@@ -100,11 +99,11 @@ end
 
 local corpseMarks = {}
 
--- Corpses spawned by gamemode or other addons arrive after the kill; catch them as they appear.
+-- The player's native ragdoll can arrive after the kill; resolve its identity
+-- rather than guessing ownership from a nearby model.
 local function markCorpseWindow(victim)
     corpseMarks[#corpseMarks + 1] = {
-        model = victim:GetModel(),
-        pos = victim:GetPos(),
+        victim = victim,
         expires = CurTime() + CORPSE_WINDOW
     }
 end
@@ -118,13 +117,14 @@ if SERVER then
         end
         if #corpseMarks == 0 or not ent:IsValid() then return end
 
-        -- Model and position are only set after creation, so inspect next tick.
+        -- Resolve the native player's actual ragdoll after initialization.
+        -- Model and distance alone can also match unrelated spawned props.
         timer.Simple(0, function()
             if not IsValid(ent) or ent:IsPlayer() or ent:IsNPC() then return end
-            local class = ent:GetClass()
-            if class ~= "prop_ragdoll" and class ~= "prop_physics" then return end
+            if ent:GetClass() ~= "prop_ragdoll" then return end
             for _, mark in ipairs(corpseMarks) do
-                if ent:GetModel() == mark.model and ent:GetPos():DistToSqr(mark.pos) <= CORPSE_RADIUS_SQR then
+                local victim = mark.victim
+                if IsValid(victim) and CurTime() <= mark.expires and victim:GetRagdollEntity() == ent then
                     vanish(ent)
                     return
                 end

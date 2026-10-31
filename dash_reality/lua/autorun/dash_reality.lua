@@ -1,7 +1,6 @@
 -- Dash Reality: space/time/NPC-behaviour manipulation toolkit for Sandbox.
 
-DashReality = DashReality or RealityTools or {}
-RealityTools = DashReality -- Compatibility for existing integrations and live state.
+DashReality = DashReality or {}
 local RT = DashReality
 
 RT.SettingList = {
@@ -19,6 +18,8 @@ RT.SettingList = {
     { group = "Player", name = "rt_player_dropweapon_ondeath", type = "bool", default = 0, label = "Players drop weapons on death" },
     { group = "Player", name = "rt_player_dropweapon_activeonly", type = "bool", default = 1, label = "Drop only the active weapon on death" },
     { group = "Player", name = "rt_player_dp_noearring", type = "bool", default = 1, label = "No blast tinnitus while dying (Death Perception)" },
+    { group = "Environment", name = "rt_water_decal_wash", type = "bool", default = 0, label = "Wash actor decals in water", help = "Native water clears all decals on submerged players, NPCs and ragdolls; it does not selectively remove blood." },
+    { group = "Environment", name = "rt_gwater_vfire_contact", type = "bool", default = 0, label = "gWater cools vFire (experimental)", help = "Singleplayer checks nearby simulated liquid. Multiplayer uses supported rain and basic-gun approximations. Visual fluid presets are not distinguished." },
     { group = "Noclip Ghost (optional)", name = "noclip_ghost_enabled", type = "bool", default = 1, label = "Noclipping players become undetectable observers" },
     { name = "noclip_ghost_adminonly", type = "bool", default = 1, label = "Only admins (and the singleplayer host)" },
     { name = "noclip_ghost_prevent_transmit", type = "bool", default = 1, label = "Hide ghost from other players' clients" },
@@ -58,6 +59,9 @@ if SERVER then
     AddCSLuaFile("dash_reality/cl_identity.lua")
     AddCSLuaFile("dash_reality/cl_profiles.lua")
     AddCSLuaFile("dash_reality/cl_workbench_bridge.lua")
+    AddCSLuaFile("dash_reality/cl_tool_shortcuts.lua")
+    AddCSLuaFile("dash_reality/cl_gwater_particle_fire.lua")
+    AddCSLuaFile("dash_reality/cl_fluid_particle_readiness.lua")
 end
 include("dash_reality/sh_general_settings.lua")
 include("dash_reality/sh_toolgun_settings.lua")
@@ -80,12 +84,20 @@ end
 
 if SERVER then
     include("dash_reality/sv_freeze_physics.lua")
+    include("dash_reality/sv_water_wash.lua")
+    include("dash_reality/sv_fluid_reactions.lua")
+    include("dash_reality/sv_fluid_particle_readiness.lua")
+    include("dash_reality/sv_gwater_particle_fire.lua")
+    include("dash_reality/sv_gwater_rain_fire.lua")
+    include("dash_reality/sv_gwater_emission_water.lua")
+    include("dash_reality/sv_gwater_workshop_patch.lua")
     AddCSLuaFile("dash_reality/cl_dashboard.lua")
     AddCSLuaFile("dash_reality/cl_frozen_context.lua")
     AddCSLuaFile("dash_reality/sh_ghost.lua")
     AddCSLuaFile("dash_reality/cl_view.lua")
     AddCSLuaFile("dash_reality/cl_death_perception.lua")
     AddCSLuaFile("dash_reality/cl_firstperson_body.lua")
+    AddCSLuaFile("dash_reality/cl_ups.lua")
     -- Refreshing the dashboard must not discard active frozen NPCs, ragdoll
     -- swaps, ghost states or in-progress Physgun undo records.
     if not RT.ServerRuntimeLoaded then
@@ -116,9 +128,13 @@ else
     include("dash_reality/cl_view.lua")
     include("dash_reality/cl_death_perception.lua")
     include("dash_reality/cl_firstperson_body.lua")
+    include("dash_reality/cl_ups.lua")
     include("dash_reality/cl_frozen_context.lua")
     include("dash_reality/cl_identity.lua")
     include("dash_reality/cl_profiles.lua")
     include("dash_reality/cl_workbench_bridge.lua")
+    include("dash_reality/cl_tool_shortcuts.lua")
+    include("dash_reality/cl_gwater_particle_fire.lua")
+    include("dash_reality/cl_fluid_particle_readiness.lua")
     include("dash_reality/cl_dashboard.lua")
 end

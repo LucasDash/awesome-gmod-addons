@@ -2,15 +2,8 @@
 
 local RT = DashReality
 
--- Retain existing swaps on refresh. Older builds kept this table private, so
--- recover their live records from the ragdolls before replacing the poller.
+-- Retain existing swaps on refresh.
 local active = RT.ActiveRagdolls or {}
-if not RT.ActiveRagdolls then
-    for _, rag in ipairs(ents.FindByClass("prop_ragdoll")) do
-        local state = rag.RT_RagState
-        if state and state.rag == rag then active[rag] = state end
-    end
-end
 RT.ActiveRagdolls = active
 -- Seconds between settle checks; also the step added to a ragdoll's "at rest" counter.
 local POLL_INTERVAL = 0.2

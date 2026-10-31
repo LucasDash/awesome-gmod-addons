@@ -11,7 +11,7 @@
 -- Everything in the "Solvers" section is pure math (no engine calls) so it can be
 -- unit-tested outside Garry's Mod; see tests/physics_spec.lua.
 
-DashReality = DashReality or RealityTools or {}
+DashReality = DashReality or {}
 local RT = DashReality
 RT.Physics = RT.Physics or {}
 local P = RT.Physics

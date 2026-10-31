@@ -3,7 +3,6 @@
 -- parented, frozen actors against the cursor ray before opening the menu.
 local RT = DashReality
 if RT.StopFrozenContext then RT.StopFrozenContext() end
-hook.Remove("InitPostEntity", "RealityTools.FrozenContext")
 
 local enabled = true
 local previous, wrapper

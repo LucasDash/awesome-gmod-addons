@@ -19,11 +19,13 @@ local function snapshot(ent)
     end
 
     local phys = ent:GetPhysicsObject()
+    local motion
+    if IsValid(phys) then motion = phys:IsMotionEnabled() end
     return {
         phys = IsValid(phys) and phys or nil,
         pos = ent:GetPos(),
         ang = ent:GetAngles(),
-        motion = IsValid(phys) and phys:IsMotionEnabled() or nil,
+        motion = motion,
     }
 end
 
