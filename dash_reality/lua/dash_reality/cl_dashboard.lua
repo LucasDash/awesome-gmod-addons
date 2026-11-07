@@ -3,23 +3,55 @@ local RT = DashReality
 local cvHalo = CreateClientConVar("rt_freeze_halo", "1", true, false, "Outline time-frozen NPCs.")
 local HALO_COLOR = Color(90, 200, 255)
 local frozenList = {}
+local frozenSet = {}
 
-local function scanFrozen()
-    frozenList = {}
-    if not cvHalo:GetBool() then return end
-    for _, ent in ipairs(ents.GetAll()) do
-        if IsValid(ent) and ent:GetNW2Bool("RT_TimeFrozen") then frozenList[#frozenList + 1] = ent end
+local function removeFrozen(ent)
+    if not frozenSet[ent] then return end
+    frozenSet[ent] = nil
+    for index = #frozenList, 1, -1 do
+        if frozenList[index] == ent then
+            table.remove(frozenList, index)
+            return
+        end
     end
 end
 
--- Disabled halos have no polling timer or entity scans. Replace our callback
--- and timer on refresh so an older closure cannot retain its frozen list.
+local function addFrozen(ent)
+    if not IsValid(ent) or frozenSet[ent] then return end
+    frozenSet[ent] = true
+    frozenList[#frozenList + 1] = ent
+end
+
+-- One initial/cleanup scan recovers state already in the client's PVS. Later
+-- changes arrive through the NW2 change hook, avoiding a repeated ents.GetAll.
+local function scanFrozen()
+    frozenList = {}
+    frozenSet = {}
+    if not cvHalo:GetBool() then return end
+    for _, ent in ipairs(ents.GetAll()) do
+        if IsValid(ent) and ent:GetNW2Bool("RT_TimeFrozen") then addFrozen(ent) end
+    end
+end
+
+-- Refresh is safe to call more than once after an autorun reload. Remove all
+-- old hooks first so they cannot retain duplicate listeners or stale lists.
 local function updateHaloEnabled()
     timer.Remove("DashReality.FrozenScan")
+    hook.Remove("EntityNetworkedVarChanged", "DashReality.FrozenHalo")
+    hook.Remove("EntityRemoved", "DashReality.FrozenHalo")
+    hook.Remove("PostCleanupMap", "DashReality.FrozenHalo")
     frozenList = {}
+    frozenSet = {}
     if not cvHalo:GetBool() then return end
     scanFrozen()
-    timer.Create("DashReality.FrozenScan", 0.5, 0, scanFrozen)
+    hook.Add("EntityNetworkedVarChanged", "DashReality.FrozenHalo", function(ent, name, _, newValue)
+        if not cvHalo:GetBool() or name ~= "RT_TimeFrozen" then return end
+        -- The hook fires before GetNW2Bool exposes the new value, so consume
+        -- newValue directly instead of querying the entity here.
+        if newValue == true then addFrozen(ent) else removeFrozen(ent) end
+    end)
+    hook.Add("EntityRemoved", "DashReality.FrozenHalo", removeFrozen)
+    hook.Add("PostCleanupMap", "DashReality.FrozenHalo", scanFrozen)
 end
 cvars.RemoveChangeCallback("rt_freeze_halo", "DashReality.FrozenHalo")
 cvars.AddChangeCallback("rt_freeze_halo", updateHaloEnabled, "DashReality.FrozenHalo")
@@ -30,7 +62,7 @@ hook.Add("PreDrawHalos", "DashReality.FrozenHalo", function()
     -- Do not draw deleted or newly thawed entities while awaiting the next scan.
     for index = #frozenList, 1, -1 do
         local ent = frozenList[index]
-        if not IsValid(ent) or not ent:GetNW2Bool("RT_TimeFrozen") then table.remove(frozenList, index) end
+        if not IsValid(ent) or not ent:GetNW2Bool("RT_TimeFrozen") then removeFrozen(ent) end
     end
     if #frozenList == 0 then return end
     halo.Add(frozenList, HALO_COLOR, 2, 2, 2, true, true)
@@ -264,9 +296,21 @@ function RT.BuildPlayerSettings(panel)
     panel:ControlHelp("Optional legs only; first-person weapon hands remain under the weapon's control.")
 
     heading(panel, "View and HUD")
-    panel:CheckBox("Show movement speed (UPS)", "rt_ups_enabled")
+    panel:CheckBox("Show movement speed", "rt_ups_enabled")
     panel:CheckBox("Measure horizontal speed only", "rt_ups_horizontal")
-    panel:ControlHelp("Speed is shown in Source units per second. Disable other speed meters to avoid overlapping displays.")
+    local speedUnits = panel:ComboBox("Speed units", "rt_ups_units")
+    for i, name in ipairs({"Source units / second (UPS)", "Kilometres / hour (km/h)", "Kilometres / minute (km/min)"}) do speedUnits:AddChoice(name, tostring(i - 1)) end
+    local unitValue = GetConVar("rt_ups_units")
+    if unitValue then
+        local selected = unitValue:GetInt()
+        if selected ~= 1 and selected ~= 2 then selected = 0 end
+        speedUnits:SetValue(speedUnits:GetOptionText(selected + 1))
+    end
+    local speedSource = panel:ComboBox("Speed measurement", "rt_ups_source")
+    for i, name in ipairs({"World position over time", "Entity velocity"}) do speedSource:AddChoice(name, tostring(i - 1)) end
+    local sourceValue = GetConVar("rt_ups_source")
+    if sourceValue then speedSource:SetValue(speedSource:GetOptionText(sourceValue:GetInt() == 1 and 2 or 1)) end
+    panel:ControlHelp("Entity velocity updates immediately. World position includes inherited movement and uses smoothing. Both measure your player, occupied vehicle or driven entity.")
     for _, def in ipairs(RT.GeneralSettings or {}) do
         if def.realm == "client" then generalControl(panel, def) end
     end

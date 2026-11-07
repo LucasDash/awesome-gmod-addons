@@ -1,4 +1,4 @@
--- Noclip Ghost: while noclipping, the player becomes an imperceptible observer.
+-- Noclip Ghost: reduce observer interaction while noclipping. Custom AI may still perceive the player.
 -- Convars noclip_ghost_* are declared in RT.SettingList (autorun) so they appear in the settings panel.
 
 local GHOST_NW = "NoclipGhost"
@@ -182,6 +182,12 @@ if SERVER then
 
     -- Catches noclip set by other addons and convar/opt-out changes that fire no PlayerNoClip event.
     timer.Create("NoclipGhost.Poll", 0.25, 0, function()
+        if not cvEnabled:GetBool() then
+            -- Retire any active ghost states, then avoid enumerating every
+            -- player on each poll while the feature is disabled.
+            for ply in pairs(ghosts) do reevaluate(ply) end
+            return
+        end
         for _, ply in ipairs(player.GetAll()) do reevaluate(ply) end
     end)
 
@@ -225,6 +231,33 @@ if SERVER then
         if IsValid(owner) and isGhost(owner) then return false end
     end)
 
+    -- Report actual state, not just the player's preference. Noclip and server
+    -- policy can prevent an opted-in player from becoming a ghost. Status never
+    -- changes flags, permissions, movement or the player's saved preference.
+    local function reportGhostStatus(ply)
+        local actual, wanted = isGhost(ply), wantsGhost(ply)
+        local state
+        if actual ~= wanted then
+            state = "transition pending"
+        elseif actual and (not ply:IsFlagSet(FL_NOTARGET) or not ply:IsFlagSet(FL_DONTTOUCH) or not ply:GetNoDraw()) then
+            state = "active, but observer flags or visibility were changed externally"
+        elseif actual then
+            state = "active (native no-target; damage protection "
+                .. (cvDamage:GetBool() and "on" or "off") .. "; sound suppression "
+                .. (cvSilent:GetBool() and "on" or "off") .. ")"
+        elseif not cvEnabled:GetBool() then state = "inactive (disabled by server)"
+        elseif ply.NoclipGhostOptOut then state = "inactive (opted out)"
+        elseif not ply:Alive() then state = "inactive (player is not alive)"
+        elseif ply:GetMoveType() ~= MOVETYPE_NOCLIP then state = "inactive (enter noclip to activate)"
+        elseif ply:InVehicle() then state = "inactive (in vehicle)"
+        else state = "inactive (admin access required)" end
+        ply:ChatPrint("Noclip Ghost: " .. state .. ". Custom AI may still detect you.")
+    end
+
+    concommand.Add("noclip_ghost_status", function(ply)
+        if IsValid(ply) then reportGhostStatus(ply) end
+    end, nil, "Report your actual noclip ghost state without changing it.")
+
     concommand.Add("noclip_ghost", function(ply, _, args)
         if not IsValid(ply) then return end
         if args[1] == nil then
@@ -232,8 +265,8 @@ if SERVER then
         else
             ply.NoclipGhostOptOut = not tobool(args[1])
         end
-        ply:ChatPrint("Noclip Ghost: " .. (ply.NoclipGhostOptOut and "off" or "on"))
         reevaluate(ply)
+        reportGhostStatus(ply)
     end, nil, "Toggle your own noclip ghost mode (optional argument 0/1).")
 
     hook.Add("ShutDown", "NoclipGhost.Shutdown", function()

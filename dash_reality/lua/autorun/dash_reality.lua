@@ -20,7 +20,7 @@ RT.SettingList = {
     { group = "Player", name = "rt_player_dp_noearring", type = "bool", default = 1, label = "No blast tinnitus while dying (Death Perception)" },
     { group = "Environment", name = "rt_water_decal_wash", type = "bool", default = 0, label = "Wash actor decals in water", help = "Native water clears all decals on submerged players, NPCs and ragdolls; it does not selectively remove blood." },
     { group = "Environment", name = "rt_gwater_vfire_contact", type = "bool", default = 0, label = "gWater cools vFire (experimental)", help = "Singleplayer checks nearby simulated liquid. Multiplayer uses supported rain and basic-gun approximations. Visual fluid presets are not distinguished." },
-    { group = "Noclip Ghost (optional)", name = "noclip_ghost_enabled", type = "bool", default = 1, label = "Noclipping players become undetectable observers" },
+    { group = "Noclip Ghost (optional)", name = "noclip_ghost_enabled", type = "bool", default = 1, label = "Reduce observer interactions while noclipping" },
     { name = "noclip_ghost_adminonly", type = "bool", default = 1, label = "Only admins (and the singleplayer host)" },
     { name = "noclip_ghost_prevent_transmit", type = "bool", default = 1, label = "Hide ghost from other players' clients" },
     { name = "noclip_ghost_silent", type = "bool", default = 1, label = "Suppress ghost sounds" },
@@ -95,6 +95,7 @@ if SERVER then
     AddCSLuaFile("dash_reality/cl_frozen_context.lua")
     AddCSLuaFile("dash_reality/sh_ghost.lua")
     AddCSLuaFile("dash_reality/cl_view.lua")
+    AddCSLuaFile("dash_reality/cl_npc_camera.lua")
     AddCSLuaFile("dash_reality/cl_death_perception.lua")
     AddCSLuaFile("dash_reality/cl_firstperson_body.lua")
     AddCSLuaFile("dash_reality/cl_ups.lua")
@@ -126,6 +127,7 @@ if SERVER then
 else
     include("dash_reality/sh_ghost.lua")
     include("dash_reality/cl_view.lua")
+    include("dash_reality/cl_npc_camera.lua")
     include("dash_reality/cl_death_perception.lua")
     include("dash_reality/cl_firstperson_body.lua")
     include("dash_reality/cl_ups.lua")
