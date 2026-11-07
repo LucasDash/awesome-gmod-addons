@@ -1,0 +1,6 @@
+{
+  "title": "Agent Session Profiles",
+  "type": "tool",
+  "tags": ["fun"],
+  "ignore": ["tests/*", "README.md"]
+}
