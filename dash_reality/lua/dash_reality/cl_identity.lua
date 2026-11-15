@@ -1,5 +1,6 @@
 -- Identity certificate and profile controls; server remains authoritative.
 local D = DashReality
+local factionPreference = CreateClientConVar("rt_identity_faction", "0", true, false, "Let supported native NPCs recognize the chosen identity.")
 local function canAdjust()
     if game.SinglePlayer() then return true end
     local ply = LocalPlayer()
@@ -9,6 +10,8 @@ function D.BuildIdentitySettings(panel)
     local heading = panel:Help("Identity Certificate")
     heading:SetFont("DermaDefaultBold")
     panel:ControlHelp("Apply a player profile inspired by an NPC. Values are approximate and can be restored.")
+    panel:CheckBox("Recognize identity faction (native Combine NPCs)", "rt_identity_faction")
+    panel:ControlHelp("Applied when choosing a profile. Combine soldiers and metropolice treat a Combine player as friendly. Other NPC frameworks may use their own relationship systems.")
     local status = panel:Help("Current identity: none")
     status.Think = function(self)
         if (self.nextRefresh or 0) > RealTime() then return end
@@ -24,10 +27,11 @@ function D.BuildIdentitySettings(panel)
         local profile = item
         panel:Help(string.format("%s: walk %d, run %d, slow walk %d, jump %d, maximum health %d.",
             profile.label, profile.walk, profile.run, profile.slow, profile.jump, profile.health))
-        local button = panel:Button("Apply " .. profile.label, "dash_identity", profile.id)
+        local button = panel:Button("Apply " .. profile.label)
+        button.DoClick = function() RunConsoleCommand("dash_identity", profile.id, factionPreference:GetBool() and "1" or "0") end
         button.Think = function(self) self:SetEnabled(canAdjust() and IsValid(LocalPlayer()) and LocalPlayer():Alive()) end
     end
     local clear = panel:Button("Restore previous identity settings", "dash_identity", "clear")
     clear.Think = function(self) self:SetEnabled(canAdjust()) end
-    panel:Help("Applying or restoring preserves your current health percentage. Profiles clear on death. Your player class, NPC factions and physics mass are unchanged.")
+    panel:Help("Applying or restoring preserves your current health percentage. Profiles clear on death. Player class and physics mass are unchanged.")
 end

@@ -39,7 +39,7 @@ local function changeMaxHealth(ply, target)
 end
 
 -- Only the requesting player is changed; no arbitrary target argument exists.
-function D.ApplyIdentity(ply, id)
+function D.ApplyIdentity(ply, id, recognizeFaction)
     if not permitted(ply) or not ply:Alive() then return false, "not permitted or not alive" end
     local profile = profiles[id or ""]
     if not profile then return false, "unknown identity" end
@@ -67,6 +67,7 @@ function D.ApplyIdentity(ply, id)
     end
     state.id = profile.id
     ply:SetNW2String("DashReality.Identity", profile.id)
+    hook.Run("DashRealityIdentityChanged", ply, profile.id, recognizeFaction == true)
     return true
 end
 
@@ -85,12 +86,13 @@ function D.ClearIdentity(ply)
     end
     states[ply] = nil
     ply:SetNW2String("DashReality.Identity", "")
+    hook.Run("DashRealityIdentityChanged", ply, nil, false)
     return true
 end
 
 concommand.Add("dash_identity", function(ply, _, args)
     if not permitted(ply) then return end
-    if args[1] == "clear" then D.ClearIdentity(ply) else D.ApplyIdentity(ply, args[1]) end
+    if args[1] == "clear" then D.ClearIdentity(ply) else D.ApplyIdentity(ply, args[1], args[2] == "1") end
 end, nil, "Apply or clear your Dash Reality identity profile (host or superadmin only).")
 
 -- Identity belongs to this life, not the next gamemode spawn. Restore safely
