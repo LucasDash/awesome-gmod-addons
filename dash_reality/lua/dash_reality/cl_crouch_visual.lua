@@ -6,7 +6,12 @@ local function restore(ply)
     local origin = changed[ply]
     if not origin then return end
     changed[ply] = nil
-    if IsValid(ply) and ply:GetRenderOrigin():DistToSqr(origin) < 0.01 then ply:SetRenderOrigin() end
+    if not IsValid(ply) then return end
+    local current = ply:GetRenderOrigin()
+    if current and current:DistToSqr(origin) < 0.01 then
+        ply:SetRenderOrigin()
+        ply:InvalidateBoneCache()
+    end
 end
 
 hook.Add("PrePlayerDraw", "DashReality.CrouchVisual", function(ply)
@@ -15,13 +20,14 @@ hook.Add("PrePlayerDraw", "DashReality.CrouchVisual", function(ply)
         return
     end
     local pos = ply:GetPos()
-    -- Do not take over an origin already displaced by another renderer.
-    if ply:GetRenderOrigin():DistToSqr(pos) > 0.01 then
+    -- GetRenderOrigin returns nil when no override is installed. GetPos is
+    -- affected by an override too, so comparing the two cannot detect ownership.
+    if ply:GetRenderOrigin() ~= nil then
         state[ply] = nil
         return
     end
     local target = 0
-    if not ply:OnGround() and ply:Crouching() then
+    if not ply:OnGround() and (ply:Crouching() or ply:IsFlagSet(FL_ANIMDUCKING)) then
         local _, stand = ply:GetHull()
         local _, duck = ply:GetHullDuck()
         local depth = math.Clamp(stand.z - duck.z, 0, 36)
@@ -33,6 +39,9 @@ hook.Add("PrePlayerDraw", "DashReality.CrouchVisual", function(ply)
     state[ply] = offset
     local origin = pos + Vector(0, 0, offset)
     ply:SetRenderOrigin(origin)
+    -- The player may already have had its bones calculated at its old origin.
+    ply:InvalidateBoneCache()
+    ply:SetupBones()
     changed[ply] = origin
 end)
 

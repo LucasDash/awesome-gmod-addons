@@ -1,14 +1,18 @@
 -- NPC-inspired player profiles. These values are illustrative, not NPC class changes.
 local D = DashReality
 D.IdentityProfiles = {
-    {id="citizen", label="Citizen", walk=125, run=210, slow=75, jump=180, health=100},
-    {id="combine", label="Combine", walk=160, run=250, slow=90, jump=180, health=150},
-    {id="zombie", label="Zombie", walk=70, run=125, slow=45, jump=110, health=150},
+    {id="citizen", label="Citizen", faction="citizen", walk=125, run=210, slow=75, jump=180, health=100,
+        classifications={"CLASS_PLAYER_ALLY", "CLASS_PLAYER_ALLY_VITAL", "CLASS_CITIZEN_PASSIVE", "CLASS_CITIZEN_REBEL"}},
+    {id="combine", label="Combine", faction="combine", walk=160, run=250, slow=90, jump=180, health=150,
+        classifications={"CLASS_COMBINE", "CLASS_METROPOLICE", "CLASS_COMBINE_GUNSHIP", "CLASS_COMBINE_HUNTER", "CLASS_MANHACK", "CLASS_SCANNER", "CLASS_STALKER"}},
+    {id="zombie", label="Zombie", faction="zombie", walk=70, run=125, slow=45, jump=110, health=150,
+        classifications={"CLASS_ZOMBIE"}},
 }
 if not SERVER then return end
 
 local profiles = {}
 for _, profile in ipairs(D.IdentityProfiles) do profiles[profile.id] = profile end
+D.IdentityProfilesById = profiles
 local states = D.IdentityStates or setmetatable({}, {__mode="k"})
 D.IdentityStates = states
 local attributes = {
@@ -23,6 +27,7 @@ local function permitted(ply)
     return IsValid(ply) and ply:IsPlayer()
         and (game.SinglePlayer() or ply:IsListenServerHost() or ply:IsSuperAdmin())
 end
+D.CanManageIdentity = permitted
 local function same(a, b)
     return isnumber(a) and isnumber(b) and math.abs(a - b) < 0.001
 end
@@ -38,9 +43,9 @@ local function changeMaxHealth(ply, target)
     end
 end
 
--- Only the requesting player is changed; no arbitrary target argument exists.
-function D.ApplyIdentity(ply, id, recognizeFaction)
-    if not permitted(ply) or not ply:Alive() then return false, "not permitted or not alive" end
+-- The requester must be authorized even when the Tool Gun targets another player.
+function D.ApplyIdentity(ply, id, recognizeFaction, requester)
+    if not permitted(requester or ply) or not IsValid(ply) or not ply:IsPlayer() or not ply:Alive() then return false, "not permitted or not alive" end
     local profile = profiles[id or ""]
     if not profile then return false, "unknown identity" end
     local values = {}
@@ -66,8 +71,9 @@ function D.ApplyIdentity(ply, id, recognizeFaction)
         state.applied[attr.key] = target
     end
     state.id = profile.id
+    state.recognizeFaction = recognizeFaction == true
     ply:SetNW2String("DashReality.Identity", profile.id)
-    hook.Run("DashRealityIdentityChanged", ply, profile.id, recognizeFaction == true)
+    hook.Run("DashRealityIdentityChanged", ply, profile.id, state.recognizeFaction)
     return true
 end
 
