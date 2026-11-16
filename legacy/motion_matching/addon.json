@@ -1,6 +1,0 @@
-{
-  "title": "Motion Matching",
-  "type": "servercontent",
-  "tags": ["build"],
-  "ignore": ["*.md"]
-}
