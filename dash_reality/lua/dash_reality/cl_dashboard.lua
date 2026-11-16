@@ -443,7 +443,8 @@ hook.Add("PopulateToolMenu", "DashReality.Sections", function()
     for _, section in ipairs(sections) do
         local category = section.category or section.title
         spawnmenu.AddToolCategory("DashReality", category, category)
-        spawnmenu.AddToolMenuOption("DashReality", category, "dash_reality_"..section.id,
-            section.title, "", "", section.build)
+        local menuId = section.id == "identity" and "rt_identity" or "dash_reality_"..section.id
+        spawnmenu.AddToolMenuOption("DashReality", category, menuId,
+            section.title, section.id == "identity" and "gmod_tool rt_identity" or "", "", section.build)
     end
 end)

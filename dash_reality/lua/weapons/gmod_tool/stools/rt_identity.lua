@@ -1,12 +1,14 @@
 TOOL.Tab = "DashReality"
 TOOL.Category = "Player"
 TOOL.Name = "#tool.rt_identity.name"
+-- The dashboard registers this mode as the Identity Certificate page.
+TOOL.AddToMenu = false
 TOOL.ClientConVar["profile"] = "citizen"
 TOOL.ClientConVar["recognition"] = "1"
 TOOL.Information = {{name = "left"}, {name = "right"}, {name = "reload"}}
 
 if CLIENT then
-    language.Add("tool.rt_identity.name", "Identity Certificate")
+    language.Add("tool.rt_identity.name", "Identity Tool")
     language.Add("tool.rt_identity.desc", "Apply an identity to a player or native NPC.")
     language.Add("tool.rt_identity.left", "Apply the selected identity to the aimed actor")
     language.Add("tool.rt_identity.right", "Apply the selected identity to yourself")
@@ -51,11 +53,3 @@ end
 function TOOL:LeftClick(trace) return apply(self, trace, "target") end
 function TOOL:RightClick(trace) return apply(self, trace, "self") end
 function TOOL:Reload(trace) return apply(self, trace, "clear") end
-
-function TOOL.BuildCPanel(panel)
-    panel:Help("Left click an NPC or player; right click applies the selected identity to yourself. Reload clears the aimed identity or yours when aiming at the world.")
-    local profiles = panel:ComboBox("Identity", "rt_identity_profile")
-    for _, profile in ipairs(DashReality.IdentityProfiles or {}) do profiles:AddChoice(profile.label, profile.id) end
-    panel:CheckBox("Recognize matching factions", "rt_identity_recognition")
-    panel:ControlHelp("For NPCs, the tool changes faction recognition only; models, health and native class stay the same. Only native NPCs are supported. Host or superadmin permission is required.")
-end
