@@ -10,6 +10,7 @@ RT.SettingList = {
     { name = "rt_freeze_rewind", type = "bool", default = 0, label = "Unfreezing rewinds the NPC to where it was frozen" },
     { name = "rt_freeze_nextbots", type = "bool", default = 1, label = "Freeze NPCs also affects NextBots (best effort)" },
     { name = "rt_undo_enable", type = "bool", default = 1, label = "Physgun moves can be undone (Undo key)", help = "Each finished physgun move becomes an undo entry." },
+    { name = "rt_tool_entity_pickup", type = "bool", default = 1, label = "Use key picks up eligible Tool Gun entities", help = "Use the normal pickup and drop controls for movable, non-interactive tool entities, such as balloons and unlocked cameras. Frozen or locked objects keep their existing behavior." },
     { group = "Physics", name = "rt_phys_npc_mass_scale", type = "float", default = 1, min = 0.1, max = 5, label = "NPC weight multiplier", help = "NPCs have no VPhysics weight, so it is estimated from their size (an 80 kg citizen). Heavier NPCs are harder for ropes, balloons and props to move." },
     { group = "Physics", name = "rt_phys_max_force", type = "float", default = 4000, min = 200, max = 20000, label = "Maximum link force (newtons)", help = "Caps how hard any rope or balloon can push or pull a body; keeps heavy props from launching NPCs." },
     { group = "Physics", name = "rt_phys_carry_friction", type = "float", default = 10, min = 1, max = 40, label = "NPC sliding friction", help = "How quickly a grounded NPC that was pulled sideways stops sliding (per second). Lower is icier." },
@@ -84,6 +85,7 @@ end
 
 if SERVER then
     include("dash_reality/sv_identity_faction.lua")
+    include("dash_reality/sv_tool_entity_pickup.lua")
     include("dash_reality/sv_freeze_physics.lua")
     include("dash_reality/sv_water_wash.lua")
     include("dash_reality/sv_fluid_reactions.lua")
